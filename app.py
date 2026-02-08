@@ -127,15 +127,12 @@ def startup_event():
     global master_db, valid_master_db
 
     from download_data import download_database
-
     print("⬇️ Ensuring database is present...")
     download_database()
 
-    print("📂 Loading Master NAV database...")
     master_db = load_master_db()
-
     if master_db is None:
-        raise RuntimeError("❌ Database could not be loaded")
+        raise RuntimeError("DB load failed")
 
     scheme_counts = master_db.groupby("scheme_code").size()
     valid_scheme_codes = scheme_counts[scheme_counts >= 500].index.tolist()
@@ -144,15 +141,6 @@ def startup_event():
     print("API Ready 🚀")
 
 
-print("Checking valid schemes...")
-
-scheme_counts = master_db.groupby("scheme_code").size()
-valid_scheme_codes = scheme_counts[scheme_counts >= 500].index.tolist()
-valid_master_db = master_db[master_db["scheme_code"].isin(valid_scheme_codes)]
-
-print("Total schemes:", master_db['scheme_code'].nunique())
-print("Valid schemes:", len(valid_scheme_codes))
-print("API Ready 🚀")
 
 # ---------------------------------------------------
 # HOME ROUTE
