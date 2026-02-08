@@ -111,10 +111,8 @@ from rolling_engine import (
     get_all_schemes,
     calculate_lumpsum_return,
     calculate_sip_return,
-    calculate_lumpsum,
-    calculate_sip,
     get_lumpsum_yearwise_growth,
-    get_sip_yearwise_growth
+    get_sip_yearwise_growth,
 )
 
 app = FastAPI(title="Mutual Fund Analytics API")
@@ -122,185 +120,110 @@ app = FastAPI(title="Mutual Fund Analytics API")
 master_db = None
 valid_master_db = None
 
+# ---------------------------------------------------
+# STARTUP
+# ---------------------------------------------------
 @app.on_event("startup")
 def startup_event():
     global master_db, valid_master_db
 
+    print("⬇️ Checking database...")
     from download_data import download_database
-    print("⬇️ Ensuring database is present...")
-    download_database()
+    ok = download_database()
+    if not ok:
+        raise RuntimeError("Database download failed")
 
+    print("📂 Loading Master NAV database...")
     master_db = load_master_db()
+
     if master_db is None:
-        raise RuntimeError("DB load failed")
+        raise RuntimeError("Database load failed")
 
     scheme_counts = master_db.groupby("scheme_code").size()
-    valid_scheme_codes = scheme_counts[scheme_counts >= 500].index.tolist()
-    valid_master_db = master_db[master_db["scheme_code"].isin(valid_scheme_codes)]
+    valid_codes = scheme_counts[scheme_counts >= 500].index.tolist()
+    valid_master_db = master_db[master_db["scheme_code"].isin(valid_codes)]
 
     print("API Ready 🚀")
 
-
-
 # ---------------------------------------------------
-# HOME ROUTE
+# HOME
 # ---------------------------------------------------
 @app.get("/")
 def home():
     return {"message": "Mutual Fund API running 🚀"}
 
 # ---------------------------------------------------
-# GET ALL VALID SCHEMES
+# SCHEMES
 # ---------------------------------------------------
 @app.get("/schemes")
 def schemes():
     return get_all_schemes(valid_master_db)
 
 # ---------------------------------------------------
-# ROLLING RETURNS SUMMARY
+# ROLLING SUMMARY
 # ---------------------------------------------------
 @app.get("/scheme/{scheme_code}")
 def scheme_summary(scheme_code: int):
-
     try:
         result = calculate_scheme_summary(valid_master_db, scheme_code)
-
         if result is None or result.empty:
             return {"error": "Not enough history"}
-
         return result.to_dict(orient="records")
-
     except Exception as e:
         return {"error": str(e)}
 
 # ---------------------------------------------------
-# LUMPSUM CALCULATOR
-# Example:
-# /lumpsum/120377?amount=100000&start=2015-01-01&end=2024-01-01
+# LUMPSUM
 # ---------------------------------------------------
 @app.get("/lumpsum/{scheme_code}")
-def lumpsum_return(
-    scheme_code: int,
-    amount: float,
-    start: str = None,
-    end: str = None
-):
+def lumpsum_return(scheme_code: int, amount: float, start: str, end: str):
     try:
-        result = calculate_lumpsum_return(
-            valid_master_db,
-            scheme_code,
-            amount,
-            start,
-            end
+        return calculate_lumpsum_return(
+            valid_master_db, scheme_code, amount, start, end
         )
-        return result
-
     except Exception as e:
         return {"error": str(e)}
 
 # ---------------------------------------------------
-# SIP CALCULATOR
-# Example:
-# /sip/120377?monthly=5000&start=2015-01-01&end=2024-01-01
+# SIP
 # ---------------------------------------------------
 @app.get("/sip/{scheme_code}")
-def sip_return(
-    scheme_code: int,
-    monthly: float,
-    start: str = None,
-    end: str = None
-):
+def sip_return(scheme_code: int, monthly: float, start: str, end: str):
     try:
-        result = calculate_sip_return(
-            valid_master_db,
-            scheme_code,
-            monthly,
-            start,
-            end
+        return calculate_sip_return(
+            valid_master_db, scheme_code, monthly, start, end
         )
-        return result
-
     except Exception as e:
         return {"error": str(e)}
 
-
-@app.get("/lumpsum/{scheme_code}")
-def lumpsum(scheme_code:int, amount:float, start:str, end:str):
-    try:
-        start_date = datetime.fromisoformat(start)
-        end_date = datetime.fromisoformat(end)
-
-        result = calculate_lumpsum(valid_master_db, scheme_code, amount, start_date, end_date)
-
-        if result is None:
-            return {"error":"Not enough data for selected period"}
-
-        return result
-
-    except Exception as e:
-        return {"error":str(e)}
-
-@app.get("/sip/{scheme_code}")
-def sip(scheme_code:int, monthly:float, start:str, end:str):
-    try:
-        start_date = datetime.fromisoformat(start)
-        end_date = datetime.fromisoformat(end)
-
-        result = calculate_sip(valid_master_db, scheme_code, monthly, start_date, end_date)
-
-        if result is None:
-            return {"error":"Not enough data for selected period"}
-
-        return result
-
-    except Exception as e:
-        return {"error":str(e)}
-
-
+# ---------------------------------------------------
+# LUMPSUM YEARLY
+# ---------------------------------------------------
 @app.get("/lumpsum_yearly/{scheme_code}")
-def lumpsum_yearly(
-    scheme_code: int,
-    amount: float,
-    start_date: str,
-    end_date: str
-):
+def lumpsum_yearly(scheme_code: int, amount: float, start_date: str, end_date: str):
     try:
         result = get_lumpsum_yearwise_growth(
-            valid_master_db,
-            scheme_code,
-            amount,
-            start_date,
-            end_date
+            valid_master_db, scheme_code, amount, start_date, end_date
         )
-
         if result is None:
             return {"error": "No data"}
-
         return result.to_dict(orient="records")
-
     except Exception as e:
         return {"error": str(e)}
 
+# ---------------------------------------------------
+# SIP YEARLY
+# ---------------------------------------------------
 @app.get("/sip_yearly/{scheme_code}")
 def sip_yearly(
-    scheme_code: int,
-    monthly_amount: float,
-    start_date: str,
-    end_date: str
+    scheme_code: int, monthly_amount: float, start_date: str, end_date: str
 ):
     try:
         result = get_sip_yearwise_growth(
-            valid_master_db,
-            scheme_code,
-            monthly_amount,
-            start_date,
-            end_date
+            valid_master_db, scheme_code, monthly_amount, start_date, end_date
         )
-
         if result is None:
             return {"error": "No data"}
-
         return result.to_dict(orient="records")
-
     except Exception as e:
         return {"error": str(e)}
