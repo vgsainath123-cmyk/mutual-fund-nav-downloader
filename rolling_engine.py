@@ -97,30 +97,42 @@ ROLLING_YEARS = [1,3,5,7,10]
 DATA_PATH = "data/processed/master_nav_database.csv"
 
 def load_master_db():
-    def load_master_db():
-        if not os.path.exists(DATA_PATH):
-            print("❌ Database file not found:", DATA_PATH)
-            return None
+    print("🔍 Checking file:", DATA_PATH)
 
+    if not os.path.exists(DATA_PATH):
+        print("❌ File not found")
+        return None
+
+    print("📄 File size:", os.path.getsize(DATA_PATH))
+
+    try:
         df = pd.read_csv(DATA_PATH)
+    except Exception as e:
+        print("❌ CSV read error:", e)
+        return None
 
-        # normalize column names
-        if "Date" not in df.columns and "date" in df.columns:
-            df.rename(columns={"date": "Date"}, inplace=True)
+    print("🧾 Columns:", df.columns.tolist())
+    print("🧮 Rows:", len(df))
 
-        if "nav" not in df.columns:
-            for c in df.columns:
-                if c.lower() in ["nav", "net_asset_value"]:
-                    df.rename(columns={c: "nav"}, inplace=True)
+    # normalize date
+    if "Date" not in df.columns and "date" in df.columns:
+        df.rename(columns={"date": "Date"}, inplace=True)
 
-        if "Date" not in df.columns:
-            print("❌ Date column still missing. Columns:", df.columns.tolist())
-            return None
+    if "nav" not in df.columns:
+        for c in df.columns:
+            if c.lower() in ["nav", "net_asset_value"]:
+                df.rename(columns={c: "nav"}, inplace=True)
 
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df = df.dropna(subset=["Date", "nav"])
+    if "Date" not in df.columns or "nav" not in df.columns:
+        print("❌ Required columns missing after normalize")
+        return None
 
-        return df
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date", "nav"])
+
+    print("✅ Clean rows:", len(df))
+    return df
+
 # ============================================================
 # ROLLING RETURN ENGINE
 # ============================================================
