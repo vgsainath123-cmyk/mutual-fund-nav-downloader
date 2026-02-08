@@ -8,3 +8,4 @@ pyarrow
 mftool
 fastapi
 uvicorn
+gdown
