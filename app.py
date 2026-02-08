@@ -121,16 +121,29 @@ from rolling_engine import (
     calculate_sip_return
 )
 
-from download_data import download_database
-download_database()
+from fastapi import FastAPI
+from rolling_engine import load_master_db
 
 app = FastAPI(title="Mutual Fund Analytics API")
 
-# ---------------------------------------------------
-# LOAD DATABASE ON STARTUP
-# ---------------------------------------------------
-print("📂 Loading Master NAV database...")
-master_db = load_master_db()
+master_db = None
+valid_master_db = None
+
+@app.on_event("startup")
+def startup_event():
+    global master_db, valid_master_db
+    print("📂 Loading Master NAV database...")
+
+    from download_data import download_database
+    download_database()
+
+    master_db = load_master_db()
+
+    scheme_counts = master_db.groupby("scheme_code").size()
+    valid_scheme_codes = scheme_counts[scheme_counts >= 500].index.tolist()
+    valid_master_db = master_db[master_db["scheme_code"].isin(valid_scheme_codes)]
+
+    print("API Ready 🚀")
 
 print("Checking valid schemes...")
 
