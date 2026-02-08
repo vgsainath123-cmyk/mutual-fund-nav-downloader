@@ -83,7 +83,7 @@
 ## Code with Lumpsum and SIP - FINAL CODE ##
 
 
-
+import os
 import pandas as pd
 import numpy as np
 
@@ -92,11 +92,15 @@ ROLLING_YEARS = [1,3,5,7,10]
 # ============================================================
 # LOAD MASTER DATABASE
 # ============================================================
-def load_master_db():
-    df = pd.read_csv("data/processed/master_nav_database.csv")
-    df['date'] = pd.to_datetime(df['date'])
-    return df
 
+DATA_PATH = "data/processed/master_nav_database.csv"
+def load_master_db():
+    if not os.path.exists(DATA_PATH):
+        print("❌ Database file not found:", DATA_PATH)
+        return None
+
+    print("📂 Loading:", DATA_PATH)
+    return pd.read_csv(DATA_PATH)
 
 # ============================================================
 # ROLLING RETURN ENGINE

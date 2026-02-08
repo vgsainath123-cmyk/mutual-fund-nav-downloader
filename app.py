@@ -102,27 +102,20 @@
 
 ## FINAL CODE ##
 
-from rolling_engine import calculate_lumpsum, calculate_sip
+from fastapi import FastAPI
 from datetime import datetime
 
-from rolling_engine import (
-    get_lumpsum_yearwise_growth,
-    get_sip_yearwise_growth
-)
-
-
-
-from fastapi import FastAPI
 from rolling_engine import (
     load_master_db,
     calculate_scheme_summary,
     get_all_schemes,
     calculate_lumpsum_return,
-    calculate_sip_return
+    calculate_sip_return,
+    calculate_lumpsum,
+    calculate_sip,
+    get_lumpsum_yearwise_growth,
+    get_sip_yearwise_growth
 )
-
-from fastapi import FastAPI
-from rolling_engine import load_master_db
 
 app = FastAPI(title="Mutual Fund Analytics API")
 
@@ -132,18 +125,24 @@ valid_master_db = None
 @app.on_event("startup")
 def startup_event():
     global master_db, valid_master_db
-    print("📂 Loading Master NAV database...")
 
     from download_data import download_database
+
+    print("⬇️ Ensuring database is present...")
     download_database()
 
+    print("📂 Loading Master NAV database...")
     master_db = load_master_db()
+
+    if master_db is None:
+        raise RuntimeError("❌ Database could not be loaded")
 
     scheme_counts = master_db.groupby("scheme_code").size()
     valid_scheme_codes = scheme_counts[scheme_counts >= 500].index.tolist()
     valid_master_db = master_db[master_db["scheme_code"].isin(valid_scheme_codes)]
 
     print("API Ready 🚀")
+
 
 print("Checking valid schemes...")
 
