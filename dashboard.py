@@ -864,19 +864,20 @@ from datetime import date
 st.set_page_config(layout="wide")
 
 # =========================================================
-# LOAD DATA FROM GOOGLE DRIVE
+# LOAD DATA FROM GOOGLE DRIVE (NO API NEEDED)
 # =========================================================
 DATA_URL = "https://drive.google.com/uc?id=1i0inzT1JH5zGE3-WCjMc4BD0RdkXVI_A"
 
 @st.cache_data(show_spinner=True)
 def load_data():
     df = pd.read_csv(DATA_URL)
-    df['Date'] = pd.to_datetime(df['Date'])
+    df["Date"] = pd.to_datetime(df["Date"])
     return df
 
 df = load_data()
 
-schemes = df[['scheme_code','scheme_name']].drop_duplicates()
+# Build scheme dictionary
+schemes = df[["scheme_code","scheme_name"]].drop_duplicates()
 scheme_names = dict(zip(schemes.scheme_name, schemes.scheme_code))
 
 # =========================================================
@@ -885,27 +886,25 @@ scheme_names = dict(zip(schemes.scheme_name, schemes.scheme_code))
 def CAGR(initial, final, years):
     return ((final/initial)**(1/years)-1)*100
 
+# ---------- Rolling Returns ----------
 def rolling_returns(data, years):
     days = years*365
-    results = []
+    res=[]
     for i in range(len(data)-days):
-        start = data.iloc[i]['nav']
-        end = data.iloc[i+days]['nav']
-        cagr = CAGR(start, end, years)
-        results.append(cagr)
-    return results
+        start=data.iloc[i]["nav"]
+        end=data.iloc[i+days]["nav"]
+        res.append(CAGR(start,end,years))
+    return res
 
-def rolling_stats(df, code, scheme_name):
-    data = df[df.scheme_code==code].sort_values("Date").reset_index(drop=True)
-    periods = [1,3,5]
-    rows = []
-
+def rolling_stats(code,name):
+    data=df[df.scheme_code==code].sort_values("Date").reset_index(drop=True)
+    periods=[1,3,5]
+    rows=[]
     for p in periods:
-        rr = rolling_returns(data, p)
-        if len(rr)==0:
-            continue
+        rr=rolling_returns(data,p)
+        if len(rr)==0: continue
         rows.append({
-            "Scheme_Name":scheme_name,
+            "Scheme_Name":name,
             "Period":f"{p}Y",
             "Last_Value":rr[-1],
             "Average":np.mean(rr),
@@ -922,148 +921,128 @@ def find_winner(final_df):
         temp=final_df[final_df.Period==period]
         pivot=temp.set_index("Scheme_Name")[["Last_Value","Average","Median","Maximum","Minimum","Std_Dev"]].T
         for _,row in pivot.iterrows():
-            winner=row.idxmax()
-            score[winner]=score.get(winner,0)+1
-    if len(score)==0: return None,None
-    w=max(score,key=score.get)
-    return w,score[w]
+            w=row.idxmax()
+            score[w]=score.get(w,0)+1
+    if len(score)==0: return None
+    return max(score,key=score.get)
 
-def highlight(df,winner):
-    def style(col):
-        return ['background-color:#00FF7F' if col.name==winner else '' for _ in col]
-    return df.style.apply(style,axis=0).format("{:.2f}")
+# ---------- Lumpsum ----------
+def lumpsum_yearly(code, amount, start, end):
+    data=df[df.scheme_code==code]
+    data=data[(data.Date>=pd.to_datetime(start))&(data.Date<=pd.to_datetime(end))]
+    data=data.sort_values("Date")
 
-# =========================================================
-# LUMPSUM YEARLY (Historical NAV)
-# =========================================================
-def lumpsum_yearly(df, code, amount, start, end):
-    data = df[df.scheme_code==code]
-    data = data[(data.Date>=pd.to_datetime(start)) & (data.Date<=pd.to_datetime(end))]
-    data = data.sort_values("Date")
+    start_nav=data.iloc[0].nav
+    units=amount/start_nav
 
-    start_nav = data.iloc[0].nav
-    units = amount / start_nav
+    yearly=[]
+    for y in sorted(data.Date.dt.year.unique()):
+        last_nav=data[data.Date.dt.year==y].iloc[-1].nav
+        yearly.append({"Year":y,"Value":units*last_nav})
 
-    yearly_values = []
-    years = sorted(data.Date.dt.year.unique())
+    final=yearly[-1]["Value"]
+    yrs=len(yearly)
+    cagr=CAGR(amount,final,yrs)
+    return yearly,final,cagr
 
-    for y in years:
-        last_nav = data[data.Date.dt.year==y].iloc[-1].nav
-        value = units * last_nav
-        yearly_values.append({"Year":y,"Value":value})
+# ---------- SIP ----------
+def sip_yearly(code, monthly, start, end):
+    data=df[df.scheme_code==code]
+    data=data[(data.Date>=pd.to_datetime(start))&(data.Date<=pd.to_datetime(end))]
+    data=data.sort_values("Date")
+    data=data.resample("M",on="Date").last().dropna()
 
-    final_value = yearly_values[-1]["Value"]
-    yrs = len(years)
-    cagr = CAGR(amount, final_value, yrs)
-
-    return yearly_values, final_value, cagr
-
-# =========================================================
-# SIP YEARLY (Historical NAV)
-# =========================================================
-def sip_yearly(df, code, monthly, start, end):
-    data = df[df.scheme_code==code]
-    data = data[(data.Date>=pd.to_datetime(start)) & (data.Date<=pd.to_datetime(end))]
-    data = data.sort_values("Date")
-    data = data.resample('M',on='Date').last().dropna()
-
-    units = 0
-    invested = 0
-    yearly_values = []
-
-    current_year = data.index[0].year
+    units=0; invested=0; yearly=[]
+    current_year=data.index[0].year
 
     for dt,row in data.iterrows():
-        units += monthly / row.nav
-        invested += monthly
+        units+=monthly/row.nav
+        invested+=monthly
+        if dt.year!=current_year:
+            yearly.append({"Year":current_year,"Value":units*row.nav})
+            current_year=dt.year
 
-        if dt.year != current_year:
-            yearly_values.append({"Year":current_year,"Value":units*row.nav})
-            current_year = dt.year
-
-    yearly_values.append({"Year":current_year,"Value":units*data.iloc[-1].nav})
-
-    final_value = yearly_values[-1]["Value"]
-    yrs = len(yearly_values)
-    cagr = CAGR(invested, final_value, yrs)
-
-    return yearly_values, invested, final_value, cagr
+    yearly.append({"Year":current_year,"Value":units*data.iloc[-1].nav})
+    final=yearly[-1]["Value"]
+    yrs=len(yearly)
+    cagr=CAGR(invested,final,yrs)
+    return yearly,invested,final,cagr
 
 # =========================================================
-# UI STARTS
+# UI
 # =========================================================
 st.title("📊 Mutual Fund Analytics Dashboard")
 
 st.sidebar.header("📅 Investment Period")
-start_date = st.sidebar.date_input("Start Date", date(2015,1,1))
-end_date = st.sidebar.date_input("End Date", date.today())
+start_date=st.sidebar.date_input("Start Date",date(2015,1,1))
+end_date=st.sidebar.date_input("End Date",date.today())
 
 # =========================================================
-# 🚀 FUND COMPARISON
+# FUND COMPARISON
 # =========================================================
 st.header("🚀 Compare Mutual Funds")
 
-selected = st.multiselect("Select funds", list(scheme_names.keys()))
+selected=st.multiselect("Select funds",list(scheme_names.keys()))
 
 if st.button("Compare Funds"):
     all_results=[]
     for name in selected:
         code=scheme_names[name]
-        all_results.append(rolling_stats(df,code,name))
+        all_results.append(rolling_stats(code,name))
     final_df=pd.concat(all_results)
-    winner,win_count=find_winner(final_df)
+
+    winner=find_winner(final_df)
 
     for period in final_df.Period.unique():
         st.subheader(period)
         temp=final_df[final_df.Period==period]
         pivot=temp.set_index("Scheme_Name")[["Last_Value","Average","Median","Maximum","Minimum","Std_Dev"]].T
-        st.dataframe(highlight(pivot,winner),use_container_width=True)
+        st.dataframe(pivot.style.format("{:.2f}"),use_container_width=True)
 
     if winner:
         st.success(f"🏆 Best Fund: {winner}")
 
 # =========================================================
-# 💰 LUMPSUM CALCULATOR
+# LUMPSUM CALCULATOR
 # =========================================================
 st.header("💰 Lumpsum Calculator")
 
-lump_scheme = st.selectbox("Select fund", list(scheme_names.keys()))
-lump_amount = st.number_input("Investment Amount",1000,10000000,100000)
+lump_scheme=st.selectbox("Select fund",list(scheme_names.keys()))
+lump_amount=st.number_input("Investment Amount",1000,10000000,100000)
 
 if st.button("Calculate Lumpsum"):
-    code = scheme_names[lump_scheme]
-    yearly, final, cagr = lumpsum_yearly(df, code, lump_amount, start_date, end_date)
+    code=scheme_names[lump_scheme]
+    yearly,final,cagr=lumpsum_yearly(code,lump_amount,start_date,end_date)
 
-    c1,c2,c3 = st.columns(3)
+    c1,c2,c3=st.columns(3)
     c1.metric("Invested",f"₹{lump_amount:,.0f}")
     c2.metric("Final Value",f"₹{final:,.0f}")
     c3.metric("CAGR",f"{cagr:.2f}%")
 
-    yearly_df = pd.DataFrame(yearly)
-    fig = px.bar(yearly_df,x="Year",y="Value",text="Value",title="Year-wise Lumpsum Growth")
-    fig.update_traces(texttemplate='₹%{text:,.0f}',textposition='outside')
+    yearly_df=pd.DataFrame(yearly)
+    fig=px.bar(yearly_df,x="Year",y="Value",text="Value",title="Year-wise Lumpsum Growth")
+    fig.update_traces(texttemplate="₹%{text:,.0f}",textposition="outside")
     st.plotly_chart(fig,use_container_width=True)
 
 # =========================================================
-# 📅 SIP CALCULATOR
+# SIP CALCULATOR
 # =========================================================
 st.header("📅 SIP Calculator")
 
-sip_scheme = st.selectbox("Select fund ", list(scheme_names.keys()),key="sip")
-sip_amount = st.number_input("Monthly SIP",500,100000,5000)
+sip_scheme=st.selectbox("Select fund ",list(scheme_names.keys()),key="sip")
+sip_amount=st.number_input("Monthly SIP",500,100000,5000)
 
 if st.button("Calculate SIP"):
-    code = scheme_names[sip_scheme]
-    yearly, invested, final, cagr = sip_yearly(df, code, sip_amount, start_date, end_date)
+    code=scheme_names[sip_scheme]
+    yearly,invested,final,cagr=sip_yearly(code,sip_amount,start_date,end_date)
 
-    c1,c2,c3 = st.columns(3)
+    c1,c2,c3=st.columns(3)
     c1.metric("Invested",f"₹{invested:,.0f}")
     c2.metric("Final Value",f"₹{final:,.0f}")
     c3.metric("CAGR",f"{cagr:.2f}%")
 
-    yearly_df = pd.DataFrame(yearly)
-    fig = px.bar(yearly_df,x="Year",y="Value",text="Value",title="Year-wise SIP Growth")
-    fig.update_traces(texttemplate='₹%{text:,.0f}',textposition='outside')
+    yearly_df=pd.DataFrame(yearly)
+    fig=px.bar(yearly_df,x="Year",y="Value",text="Value",title="Year-wise SIP Growth")
+    fig.update_traces(texttemplate="₹%{text:,.0f}",textposition="outside")
     st.plotly_chart(fig,use_container_width=True)
-
 
