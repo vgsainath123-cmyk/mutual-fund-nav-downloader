@@ -86,6 +86,7 @@
 import os
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 ROLLING_YEARS = [1,3,5,7,10]
 
@@ -94,17 +95,32 @@ ROLLING_YEARS = [1,3,5,7,10]
 # ============================================================
 
 DATA_PATH = "data/processed/master_nav_database.csv"
+
 def load_master_db():
-    print("🔎 Looking for DB at:", os.path.abspath(DATA_PATH))
+    def load_master_db():
+        if not os.path.exists(DATA_PATH):
+            print("❌ Database file not found:", DATA_PATH)
+            return None
 
-    if not os.path.exists(DATA_PATH):
-        print("❌ Database file NOT found at:", os.path.abspath(DATA_PATH))
-        print("📁 Current folder:", os.getcwd())
-        print("📂 Files here:", os.listdir())
-        return None
+        df = pd.read_csv(DATA_PATH)
 
-    print("📂 Found DB, loading:", DATA_PATH)
-    return pd.read_csv(DATA_PATH)
+        # normalize column names
+        if "Date" not in df.columns and "date" in df.columns:
+            df.rename(columns={"date": "Date"}, inplace=True)
+
+        if "nav" not in df.columns:
+            for c in df.columns:
+                if c.lower() in ["nav", "net_asset_value"]:
+                    df.rename(columns={c: "nav"}, inplace=True)
+
+        if "Date" not in df.columns:
+            print("❌ Date column still missing. Columns:", df.columns.tolist())
+            return None
+
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date", "nav"])
+
+        return df
 # ============================================================
 # ROLLING RETURN ENGINE
 # ============================================================
