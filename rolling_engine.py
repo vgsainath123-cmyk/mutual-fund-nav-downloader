@@ -95,13 +95,16 @@ ROLLING_YEARS = [1,3,5,7,10]
 
 DATA_PATH = "data/processed/master_nav_database.csv"
 def load_master_db():
+    print("🔎 Looking for DB at:", os.path.abspath(DATA_PATH))
+
     if not os.path.exists(DATA_PATH):
-        print("❌ Database file not found:", DATA_PATH)
+        print("❌ Database file NOT found at:", os.path.abspath(DATA_PATH))
+        print("📁 Current folder:", os.getcwd())
+        print("📂 Files here:", os.listdir())
         return None
 
-    print("📂 Loading:", DATA_PATH)
+    print("📂 Found DB, loading:", DATA_PATH)
     return pd.read_csv(DATA_PATH)
-
 # ============================================================
 # ROLLING RETURN ENGINE
 # ============================================================
