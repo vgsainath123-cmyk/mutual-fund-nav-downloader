@@ -859,119 +859,168 @@ import pandas as pd
 import plotly.express as px
 from datetime import date
 
-# 🔗 CHANGE TO YOUR RENDER API
 API = "https://mutual-fund-nav-downloader-d53f.onrender.com"
 
 st.set_page_config(layout="wide")
+st.title("📊 Mutual Fund Analytics Dashboard")
 
 # --------------------------------------------------
-# Load schemes once
+# Safe loader for schemes
 # --------------------------------------------------
-@st.cache_data
+@st.cache_data(show_spinner=True)
 def load_schemes():
-    r = requests.get(f"{API}/schemes", timeout=60)
-    r.raise_for_status()
-    data = r.json()
-    return pd.DataFrame(data)
+    try:
+        r = requests.get(f"{API}/schemes", timeout=60)
 
-schemes_df = load_schemes()
+        if r.status_code != 200:
+            st.error(f"API error {r.status_code}")
+            st.stop()
+
+        if not r.headers.get("content-type","").startswith("application/json"):
+            st.error("API returned non-JSON response. FastAPI may be restarting.")
+            st.stop()
+
+        return r.json()
+
+    except Exception as e:
+        st.error(f"Cannot reach API: {e}")
+        st.stop()
+
+schemes = load_schemes()
+
+if not isinstance(schemes, list):
+    st.error("Invalid schemes data from API")
+    st.stop()
+
+schemes_df = pd.DataFrame(schemes)
+
+required = {"scheme_code","scheme_name"}
+if not required.issubset(schemes_df.columns):
+    st.error(f"API columns mismatch: {schemes_df.columns.tolist()}")
+    st.stop()
+
 scheme_names = dict(zip(schemes_df.scheme_name, schemes_df.scheme_code))
 
 # --------------------------------------------------
-# Highlight best fund
+# Helpers
 # --------------------------------------------------
 def find_winner(final_df):
     score = {}
     for period in final_df["Period"].unique():
         temp = final_df[final_df["Period"] == period]
-        pivot = temp.set_index("Scheme_Name")[[
-            "Last_Value","Average","Median","Maximum","Minimum","Std_Dev"
-        ]].T
+        pivot = temp.set_index("Scheme_Name")[
+            ["Last_Value","Average","Median","Maximum","Minimum","Std_Dev"]
+        ].T
 
         for _, row in pivot.iterrows():
-            winner = row.idxmax()
-            score[winner] = score.get(winner, 0) + 1
+            w = row.idxmax()
+            score[w] = score.get(w, 0) + 1
 
     if not score:
         return None, None
 
-    winner = max(score, key=score.get)
-    return winner, score[winner]
+    return max(score, key=score.get), max(score.values())
 
-def highlight_winner_column(df, winner):
+def highlight_winner(df, winner):
     def style(col):
         return ["background-color:#00FF7F" if col.name == winner else "" for _ in col]
     return df.style.apply(style, axis=0).format("{:.2f}")
 
 # --------------------------------------------------
-# UI
+# Sidebar
 # --------------------------------------------------
-st.title("📊 Mutual Fund Analytics Dashboard")
-
 st.sidebar.header("📅 Investment Period")
 start_date = st.sidebar.date_input("Start Date", date(2015,1,1))
 end_date = st.sidebar.date_input("End Date", date.today())
 
-# =========================================================
+# ==================================================
 # 🚀 ROLLING RETURNS COMPARISON
-# =========================================================
+# ==================================================
 st.header("🚀 Compare Mutual Funds")
 
-selected_scheme = st.multiselect(
-    "🔎 Select funds to compare",
-    list(scheme_names.keys())
-)
+selected = st.multiselect("Select funds", list(scheme_names.keys()))
 
-if st.button("🚀 Compare Funds"):
-    if not selected_scheme:
+if st.button("Compare Funds"):
+
+    if not selected:
         st.warning("Select at least one fund")
         st.stop()
 
-    all_results = []
-    progress = st.progress(0)
+    all_rows = []
 
-    for i, scheme_name in enumerate(selected_scheme):
-        code = scheme_names[scheme_name]
-        data = requests.get(f"{API}/scheme/{code}", timeout=120).json()
+    for name in selected:
+        code = scheme_names[name]
+        res = requests.get(f"{API}/scheme/{code}").json()
 
-        if isinstance(data, dict) and "error" in data:
-            st.warning(f"{scheme_name} → {data['error']}")
+        if isinstance(res, dict) and "error" in res:
+            st.warning(f"{name}: Not enough history")
             continue
 
-        df = pd.DataFrame(data)
-        all_results.append(df)
-        progress.progress((i+1)/len(selected_scheme))
+        all_rows.extend(res)
 
-    final_df = pd.concat(all_results, ignore_index=True)
-    winner_fund, win_count = find_winner(final_df)
+    final_df = pd.DataFrame(all_rows)
 
-    st.subheader("📊 Rolling Return Comparison")
-    for period in final_df["Period"].unique():
-        st.markdown(f"### {period}")
-        temp = final_df[final_df["Period"] == period]
-        pivot = temp.set_index("Scheme_Name")[[
-            "Last_Value","Average","Median","Maximum","Minimum","Std_Dev"
-        ]].T
-        styled = highlight_winner_column(pivot, winner_fund) if winner_fund else pivot.style
-        st.dataframe(styled, use_container_width=True)
+    if final_df.empty:
+        st.error("No valid data returned from API")
+        st.stop()
 
-    if winner_fund:
-        st.success(f"🏆 Overall Best Fund: {winner_fund} (won {win_count} metrics)")
+    if "Period" not in final_df.columns:
+        st.error("Rolling data missing 'Period' column")
+        st.write("Received columns:", final_df.columns.tolist())
+        st.stop()
 
-# =========================================================
+    winner, count = find_winner(final_df)
+
+    st.header("📊 Rolling Return Comparison")
+
+    for p in final_df["Period"].unique():
+        st.subheader(p)
+        temp = final_df[final_df["Period"] == p]
+
+        pivot = temp.set_index("Scheme_Name")[
+            ["Last_Value","Average","Median","Maximum","Minimum","Std_Dev"]
+        ].T
+
+        st.dataframe(
+            highlight_winner(pivot, winner) if winner else pivot.style,
+            use_container_width=True
+        )
+
+    # ==================================================
+    # 📈 DISTRIBUTION TABLES
+    # ==================================================
+    st.header("📈 Rolling Return Distribution %")
+
+    for p in final_df["Period"].unique():
+        st.subheader(f"Distribution → {p}")
+        temp = final_df[final_df["Period"] == p]
+
+        dist = temp.set_index("Scheme_Name")[
+            ["Pct_0_8","Pct_8_12","Pct_12_15","Pct_15_20","Pct_Greater_20"]
+        ].T
+
+        st.dataframe(
+            highlight_winner(dist, winner) if winner else dist.style,
+            use_container_width=True
+        )
+
+    if winner:
+        st.success(f"🏆 Overall Best Fund: {winner} (won {count} metrics)")
+
+# ==================================================
 # 💰 LUMPSUM
-# =========================================================
+# ==================================================
 st.header("💰 Lumpsum Calculator")
 
-lump_scheme = st.selectbox("Select fund", list(scheme_names.keys()), key="lump")
+lump_scheme = st.selectbox("Select fund", list(scheme_names.keys()))
 lump_amount = st.number_input("Investment Amount", 1000, 10000000, 100000)
 
 if st.button("Calculate Lumpsum"):
     code = scheme_names[lump_scheme]
+
     result = requests.get(
         f"{API}/lumpsum/{code}",
-        params={"amount": lump_amount, "start": start_date, "end": end_date},
-        timeout=120
+        params={"amount":lump_amount,"start":start_date,"end":end_date}
     ).json()
 
     if "error" in result:
@@ -984,19 +1033,17 @@ if st.button("Calculate Lumpsum"):
 
         yearly = requests.get(
             f"{API}/lumpsum_yearly/{code}",
-            params={"amount": lump_amount, "start_date": start_date, "end_date": end_date},
-            timeout=120
+            params={"amount":lump_amount,"start_date":start_date,"end_date":end_date}
         ).json()
 
         df = pd.DataFrame(yearly)
-        fig = px.bar(df, x="Year", y="portfolio_value", text="portfolio_value",
-                     title="Year-wise Lumpsum Growth")
+        fig = px.bar(df, x="Year", y="portfolio_value", text="portfolio_value")
         fig.update_traces(texttemplate="₹%{text:,.0f}", textposition="outside")
         st.plotly_chart(fig, use_container_width=True)
 
-# =========================================================
+# ==================================================
 # 📅 SIP
-# =========================================================
+# ==================================================
 st.header("📅 SIP Calculator")
 
 sip_scheme = st.selectbox("Select fund ", list(scheme_names.keys()), key="sip")
@@ -1004,10 +1051,10 @@ sip_amount = st.number_input("Monthly SIP", 500, 100000, 5000)
 
 if st.button("Calculate SIP"):
     code = scheme_names[sip_scheme]
+
     result = requests.get(
         f"{API}/sip/{code}",
-        params={"monthly": sip_amount, "start": start_date, "end": end_date},
-        timeout=120
+        params={"monthly":sip_amount,"start":start_date,"end":end_date}
     ).json()
 
     if "error" in result:
@@ -1020,12 +1067,10 @@ if st.button("Calculate SIP"):
 
         yearly = requests.get(
             f"{API}/sip_yearly/{code}",
-            params={"monthly_amount": sip_amount, "start_date": start_date, "end_date": end_date},
-            timeout=120
+            params={"monthly_amount":sip_amount,"start_date":start_date,"end_date":end_date}
         ).json()
 
         df = pd.DataFrame(yearly)
-        fig = px.bar(df, x="Year", y="value", text="value",
-                     title="Year-wise SIP Growth")
+        fig = px.bar(df, x="Year", y="value", text="value")
         fig.update_traces(texttemplate="₹%{text:,.0f}", textposition="outside")
         st.plotly_chart(fig, use_container_width=True)
